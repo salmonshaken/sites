@@ -1,0 +1,1558 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>スイスイ漢字道場</title>
+
+    <!-- ホーム画面アイコン（iOS / Android 共通の元絵は icons/icon.svg） -->
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+    <link rel="apple-touch-icon" sizes="167x167" href="icons/apple-touch-icon-167.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="icons/apple-touch-icon-152.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+    <link rel="manifest" href="manifest.json">
+
+    <!-- ホーム画面から起動したときに Safari のUIを出さない -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="漢字道場">
+    <meta name="theme-color" content="#5f3d1d">
+    <!-- 外部ライブラリ（Hanzi Writer: MIT / canvas-confetti: ISC）。
+         以前はCDNから読み込んでいたが、実行時にコードを落とす形をやめて同梱にした。 -->
+    <script src="assets/vendor/hanzi-writer.min.js"></script>
+    <script src="assets/vendor/confetti.browser.min.js"></script>
+
+    <!-- 読みもの（よくあるしつもん・クレジット・プライバシー）の本文。
+         アプリの動きに関係しない文章だけを分けてある。 -->
+    <script src="content.js"></script>
+
+    <!-- 1026字ぶんの音訓。以前は1字表示するたびに kanjiapi.dev へ問い合わせていた。
+         build/fetch-readings.py で作り直せる。 -->
+    <script src="assets/readings.js"></script>
+    <!-- 同梱フォント（SIL OFL 1.1）。Google Fonts からの読み込みをやめ、
+         このアプリで使う文字だけに絞ったものを assets/fonts/ に置いてある。 -->
+    <link rel="stylesheet" href="assets/fonts.css">
+    <style>
+        :root {
+            --card: 400px;
+
+            /* ---- 道場パレット ---- */
+            --washi:      #fdf6e6;  /* 和紙 */
+            --washi-deep: #f3e7cd;
+            --sumi:       #241f1b;  /* 墨 */
+            --sumi-soft:  #5b5147;
+            --shu:        #cf3a2e;  /* 朱 */
+            --shu-deep:   #a52a20;
+            --ai:         #22406e;  /* 藍 */
+            --ai-deep:    #16294a;
+            --kin:        #d4a017;  /* 金 */
+            --wood:       #8b5a2b;
+            --wood-deep:  #5f3d1d;
+            --wood-light: #b6803f;
+            --tatami:     #8fa05e;
+
+            --font-brush:  'Yuji Syuku', 'Klee One', serif;
+            --font-ui:     'Zen Maru Gothic', 'Noto Sans JP', sans-serif;
+            --font-impact: 'Dela Gothic One', 'Zen Maru Gothic', sans-serif;
+        }
+
+        html, body { height: 100%; }
+
+        body {
+            font-family: var(--font-ui);
+            color: var(--sumi);
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+
+            /* 和紙＋市松のかすかな地紋 */
+            background-color: var(--washi);
+            background-image:
+                repeating-linear-gradient(45deg, rgba(139,90,43,.028) 0 22px, transparent 22px 44px),
+                repeating-linear-gradient(-45deg, rgba(139,90,43,.028) 0 22px, transparent 22px 44px);
+        }
+
+        .kanji-font {
+            font-family: 'UD Digi Kyokasho N-R', 'UD Digi Kyokasho', 'Yu Kyokasho', 'YuKyokasho', 'Klee One', cursive;
+        }
+        .brush { font-family: var(--font-brush); font-weight: 400; }
+        .impact { font-family: var(--font-impact); font-weight: 400; }
+
+        /* ---- 木の質感 ---- */
+        /* 白文字を載せるので、明るいほうの色でも 4.5:1 を満たす濃さにしてある */
+        .wood {
+            background-image:
+                repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 2px, transparent 2px 11px),
+                linear-gradient(180deg, #96652f, #6b4423);
+        }
+        .wood-dark {
+            background-image:
+                repeating-linear-gradient(90deg, rgba(0,0,0,.08) 0 2px, transparent 2px 9px),
+                linear-gradient(180deg, var(--wood), var(--wood-deep));
+        }
+
+        /* ---- 画面（ビュー）切り替え ---- */
+        .view { display: none; position: absolute; inset: 0; flex-direction: column; }
+        .view.active { display: flex; }
+
+        .scroll-y {
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
+            overscroll-behavior: contain;
+        }
+
+        /* =========================================================
+         *  ホーム：のれん・提灯
+         * ========================================================= */
+        .beam { height: 14px; }
+
+        .noren { position: relative; }
+
+        /* 二段のれん。上段は生成りの日除け幕に墨字で「スイスイ」。
+           藍地の4枚に対して明るい帯が入ることで「抜け」ができ、
+           下段は4枚均等のままなので、のれんとしてのリズムが崩れない。 */
+        .noren-title { display: block; margin: 0; }
+        .noren-valance {
+            display: flex; align-items: center; justify-content: center;
+            width: calc(4 * 4.6rem + 3 * 3px);
+            height: 2.8rem;
+            margin: -2px auto .25rem;
+            background: linear-gradient(180deg, #fdf6e6, #efe3c8);
+            color: var(--sumi);
+            font-family: var(--font-brush);
+            font-size: 1.7rem;
+            letter-spacing: .42em;
+            text-indent: .42em;   /* letter-spacing のぶん右に寄るのを打ち消す */
+            -webkit-text-stroke: 1.8px currentColor;
+            paint-order: stroke fill;
+            box-shadow: inset 0 -10px 14px rgba(139,90,43,.18), 0 3px 6px rgba(0,0,0,.25);
+        }
+        .noren-pole {
+            height: 14px; border-radius: 7px;
+            width: calc(4 * 4.6rem + 3 * 3px + 2.5rem);
+            max-width: 96%;
+            margin: 0 auto 0;
+            box-shadow: 0 3px 6px rgba(0,0,0,.35);
+        }
+        .noren-panels { display: flex; gap: 3px; justify-content: center; margin-top: -2px; }
+        .noren-panels span {
+            display: flex; align-items: flex-start; justify-content: center;
+            padding-top: .55rem;
+            width: 4.6rem; height: 5.4rem;
+            background: linear-gradient(180deg, var(--ai), var(--ai-deep));
+            color: var(--washi);
+            font-family: var(--font-brush);
+            font-size: 2.7rem;
+            box-shadow: inset 0 -20px 24px rgba(0,0,0,.3), 0 4px 8px rgba(0,0,0,.25);
+            text-shadow: 0 2px 3px rgba(0,0,0,.45);
+        }
+        @media (max-width: 420px) {
+            .noren-panels span { width: 3.4rem; height: 4.2rem; font-size: 2rem; }
+            .noren-valance { width: calc(4 * 3.4rem + 3 * 3px); height: 2.2rem; font-size: 1.3rem; -webkit-text-stroke: 1.4px currentColor; }
+            .noren-pole { width: calc(4 * 3.4rem + 3 * 3px + 2rem); }
+        }
+
+        .lantern { position: absolute; top: 6px; width: 46px; animation: sway 4s ease-in-out infinite; }
+        .lantern.left  { left: 2%;  transform-origin: 50% 0; }
+        .lantern.right { right: 2%; transform-origin: 50% 0; animation-delay: -2s; }
+        @keyframes sway {
+            0%, 100% { transform: rotate(-4deg); }
+            50%      { transform: rotate(4deg); }
+        }
+
+        /* ---- 木札（見出し・ボタン共通） ---- */
+        .fuda {
+            color: var(--washi);
+            border-radius: 10px;
+            border: 2px solid rgba(0,0,0,.25);
+            box-shadow: 0 4px 0 var(--wood-deep), 0 6px 10px rgba(0,0,0,.25);
+            text-shadow: 0 2px 2px rgba(0,0,0,.35);
+        }
+        .fuda:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--wood-deep); }
+
+        /* =========================================================
+         *  帯（学年えらび）
+         * ========================================================= */
+        .belt {
+            position: relative;
+            border-radius: 9px;
+            padding: .8rem .35rem .95rem;
+            background: var(--belt);
+            color: var(--belt-ink);
+            border: 2px solid rgba(0,0,0,.28);
+            box-shadow: inset 0 -6px 10px rgba(0,0,0,.18), 0 3px 0 rgba(0,0,0,.2);
+            transition: transform .12s ease, box-shadow .12s ease;
+            line-height: 1.15;
+        }
+        .belt::after {           /* 帯のステッチ */
+            content: '';
+            position: absolute; inset: 5px 7px;
+            border-radius: 5px;
+            border: 1px dashed color-mix(in srgb, var(--belt-ink) 40%, transparent);
+            pointer-events: none;
+        }
+        .belt .belt-grade { display: block; font-family: var(--font-impact); font-size: 1.15rem; }
+        .belt .belt-name  { display: block; font-size: .68rem; opacity: .85; margin-top: .1rem; }
+        .belt:active { transform: translateY(2px); }
+        .belt[aria-pressed="true"] {
+            transform: translateY(-3px) scale(1.04);
+            box-shadow: inset 0 -6px 10px rgba(0,0,0,.18), 0 0 0 5px var(--kin), 0 8px 14px rgba(0,0,0,.3);
+        }
+
+        /* 選択マーク（帯・巻物で共通）。文字ではなく図形なので小さくても読める。 */
+        .pick {
+            position: absolute; top: -11px; right: -11px;
+            z-index: 3;   /* 巻物の軸(::after)や帯のステッチより前に出す */
+            width: 28px; height: 28px;
+            display: none; align-items: center; justify-content: center;
+            border-radius: 50%;
+            background: var(--shu);
+            color: #fff;
+            border: 3px solid var(--washi);
+            box-shadow: 0 2px 5px rgba(0,0,0,.35);
+        }
+        .pick svg { width: 15px; height: 15px; }
+        [aria-pressed="true"] > .pick { display: flex; }
+        /* 選択中のカードは隣のカードより前面に置く */
+        .belt[aria-pressed="true"], .makimono[aria-pressed="true"] { z-index: 2; }
+
+        /* =========================================================
+         *  巻物（モードえらび）
+         * ========================================================= */
+        .makimono {
+            position: relative;
+            margin: 0 12px;
+            padding: 1rem 1rem 1.1rem;
+            text-align: left;
+            background: linear-gradient(180deg, #fffaf0, var(--washi-deep));
+            border-top: 2px solid rgba(139,90,43,.3);
+            border-bottom: 2px solid rgba(139,90,43,.3);
+            box-shadow: 0 4px 10px rgba(0,0,0,.15);
+            transition: transform .12s ease, box-shadow .12s ease;
+        }
+        .makimono::before, .makimono::after {   /* 左右の軸 */
+            content: '';
+            position: absolute; top: -8px; bottom: -8px; width: 14px;
+            border-radius: 7px;
+            background-image:
+                repeating-linear-gradient(0deg, rgba(0,0,0,.07) 0 2px, transparent 2px 9px),
+                linear-gradient(90deg, var(--wood-light), var(--wood-deep));
+            box-shadow: 0 2px 5px rgba(0,0,0,.35);
+        }
+        .makimono::before { left: -12px; }
+        .makimono::after  { right: -12px; }
+        .makimono:active { transform: translateY(2px); }
+        .makimono[aria-pressed="true"] {
+            box-shadow: 0 0 0 5px var(--kin), 0 8px 16px rgba(0,0,0,.22);
+            transform: translateY(-3px);
+        }
+        .makimono .mode-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .55rem; }
+        .makimono .mode-title { font-family: var(--font-brush); font-size: 1.5rem; color: var(--sumi); white-space: nowrap; letter-spacing: .08em; }
+        .makimono .mode-sub {
+            font-size: .72rem; font-weight: 700; color: var(--shu-deep);
+            border: 1px solid var(--shu-deep); border-radius: 4px; padding: 0 .3rem;
+            white-space: nowrap; flex: none;
+        }
+        .makimono .mode-desc { font-size: .8rem; color: var(--sumi-soft); margin-top: .35rem; line-height: 1.5; }
+        .makimono .mode-hint {
+            font-size: .72rem; font-weight: 700; color: var(--ai);
+            margin-top: .45rem; border-top: 1px dashed rgba(0,0,0,.2); padding-top: .35rem;
+        }
+        .makimono .mode-icon { width: 26px; height: 26px; flex: none; }
+
+        /* =========================================================
+         *  クイズ画面
+         * ========================================================= */
+        .card-frame {
+            padding: 11px;
+            border-radius: 20px;
+            box-shadow: 0 10px 22px rgba(0,0,0,.28), inset 0 0 0 2px rgba(0,0,0,.2);
+        }
+
+        #character-target-div {
+            position: relative;
+            width: var(--card);
+            height: var(--card);
+            margin: 0 auto;
+            background-color: #fffdf7;
+            border-radius: 12px;
+            box-shadow: inset 0 0 0 1px rgba(139,90,43,.35);
+            transition: transform 0.3s ease-out;
+            touch-action: none; /* Apple Pencil の誤スクロール防止 */
+        }
+
+        #character-target-div.shake {
+            animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+            box-shadow: inset 0 0 0 3px var(--shu), 0 0 22px rgba(207,58,46,.55);
+        }
+
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-3px, 0, 0); }
+            20%, 80% { transform: translate3d(5px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-10px, 0, 0); }
+            40%, 60% { transform: translate3d(10px, 0, 0); }
+        }
+
+        .grid-lines { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transition: opacity 0.5s ease; }
+        .grid-lines line { stroke: #d9c8a6; stroke-width: 2; stroke-dasharray: 8 8; }
+
+        #hanzi-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; border-radius: 12px; overflow: hidden; }
+
+        /* 学年バッジ＝帯色の木札 */
+        #grade-label-badge {
+            position: absolute; top: -15px; left: 50%; transform: translateX(-50%);
+            z-index: 20; white-space: nowrap;
+            padding: .3rem 1.1rem;
+            font-size: .8rem; font-weight: 700;
+            background: var(--belt, var(--kin));
+            color: var(--belt-ink, #3a2b05);
+            border: 2px solid rgba(0,0,0,.3);
+            border-radius: 7px;
+            box-shadow: 0 3px 0 rgba(0,0,0,.25);
+        }
+
+        /* 進捗＝15個の判子マス */
+        /* 進捗＝15個の判子マス。正解したマスは朱で塗りつぶし、白いチェックを捺す。 */
+        .stamp {
+            width: 1.8rem; height: 1.8rem;
+            display: flex; align-items: center; justify-content: center;
+            border: 2px solid rgba(91,81,71,.4);
+            border-radius: 5px;
+            background: rgba(255,255,255,.6);
+        }
+        .stamp svg { width: 1.1rem; height: 1.1rem; display: none; }
+        .stamp.done {
+            border-color: var(--shu-deep);
+            background: var(--shu);
+            color: #fff;
+            animation: stampIn .35s cubic-bezier(.2,1.6,.4,1) both;
+        }
+        .stamp.done svg { display: block; }
+        .stamp.now { box-shadow: 0 0 0 3px var(--kin); }
+        @keyframes stampIn {
+            0%   { transform: scale(2.2) rotate(-18deg); opacity: 0; }
+            100% { transform: scale(1) rotate(0); opacity: 1; }
+        }
+
+        /* 気合いの一言（喝！／一本！） */
+        .kiai {
+            position: absolute; top: 42%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: var(--font-brush);
+            font-size: clamp(3rem, 14vw, 6rem);
+            pointer-events: none; opacity: 0; z-index: 30;
+            text-shadow: 0 4px 0 rgba(0,0,0,.25);
+        }
+        .kiai.show { animation: kiaiPop .9s ease-out both; }
+        @keyframes kiaiPop {
+            0%   { opacity: 0; transform: translate(-50%,-50%) scale(2.4) rotate(-14deg); }
+            18%  { opacity: 1; transform: translate(-50%,-50%) scale(1) rotate(-8deg); }
+            70%  { opacity: 1; }
+            100% { opacity: 0; transform: translate(-50%,-56%) scale(1.05) rotate(-8deg); }
+        }
+
+        /* 読みパネル＝小さな巻物 */
+        .yomi {
+            position: relative;
+            max-height: 8.5rem;   /* 読みが多い字でもナビに重ならないようにする保険 */
+            overflow: hidden;
+            margin-top: 1.5rem;
+            padding: .85rem 1rem;
+            background: linear-gradient(180deg, #fffaf0, var(--washi-deep));
+            border-top: 2px solid rgba(139,90,43,.3);
+            border-bottom: 2px solid rgba(139,90,43,.3);
+            box-shadow: 0 4px 10px rgba(0,0,0,.15);
+            z-index: 20;
+        }
+        .yomi::before, .yomi::after {
+            content: ''; position: absolute; top: -7px; bottom: -7px; width: 12px; border-radius: 6px;
+            background-image:
+                repeating-linear-gradient(0deg, rgba(0,0,0,.07) 0 2px, transparent 2px 9px),
+                linear-gradient(90deg, var(--wood-light), var(--wood-deep));
+            box-shadow: 0 2px 5px rgba(0,0,0,.3);
+        }
+        .yomi::before { left: -10px; }
+        .yomi::after  { right: -10px; }
+        .yomi-tag {
+            flex: none; width: 2.4rem; text-align: center;
+            font-family: var(--font-brush); font-size: 1rem;
+            border-radius: 5px; padding: .1rem 0;
+            color: var(--washi);
+        }
+
+        .particle { position: absolute; border-radius: 50%; pointer-events: none; animation: pop 0.8s cubic-bezier(0.1, 0.8, 0.2, 1) forwards; }
+        @keyframes pop {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+            100% { transform: translate(var(--tx), var(--ty)) scale(1); opacity: 0; }
+        }
+
+        @keyframes dropIn { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+        .card-container { perspective: 1200px; }
+        .card-enter { animation: cardEnter 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+        @keyframes cardEnter {
+            from { opacity: 0; transform: translateX(60px) rotateY(-15deg) scale(0.95); }
+            to   { opacity: 1; transform: translateX(0) rotateY(0) scale(1); }
+        }
+
+        /* 免許皆伝の朱印 */
+        @keyframes sealSlam {
+            0%   { transform: rotate(-30deg) scale(4); opacity: 0; }
+            55%  { transform: rotate(-12deg) scale(.92); opacity: 1; }
+            75%  { transform: rotate(-12deg) scale(1.06); }
+            100% { transform: rotate(-12deg) scale(1); opacity: 1; }
+        }
+
+        /* =========================================================
+         *  漢字ずかん
+         * ========================================================= */
+        .shoji {
+            background: #fffdf7;
+            border: 3px solid var(--wood);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,.18);
+        }
+        /* 格子（障子）状に並べる。行が埋まらなくても余白が出ないよう、
+           枠線はマス自身に持たせる（コンテナ背景で描かない）。 */
+        .zukan-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(3rem, 1fr)); gap: 0; }
+        .zukan-cell {
+            aspect-ratio: 1 / 1;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.6rem; line-height: 1;
+            border: 1px solid rgba(139,90,43,.32);
+        }
+        /* まだ出題されていない漢字：うすいグレー */
+        .zukan-cell.unseen { color: #aca496; background: #f7f4ec; }
+        /* 出題されたことのある漢字：白地に黒でくっきり */
+        .zukan-cell.seen   { color: #111111; background: #ffffff; }
+        /* にがて（正解までのミス3回以上）は朱でかこむ */
+        .zukan-cell.weak   { box-shadow: inset 0 0 0 3px var(--shu); }
+
+        /* =========================================================
+         *  よくあるしつもん（高札）
+         * ========================================================= */
+        .faq-item {
+            background: #fffdf7;
+            border: 2px solid rgba(139,90,43,.45);
+            border-radius: 8px;
+            box-shadow: 0 3px 8px rgba(0,0,0,.14);
+            overflow: hidden;
+        }
+        .faq-q { width:100%; text-align:left; padding:.9rem 1.1rem; font-weight:700; color: var(--sumi); display:flex; gap:.7rem; align-items:flex-start; }
+        .faq-a { padding:0 1.1rem 1.1rem 2.9rem; color: var(--sumi-soft); line-height:1.9; display:none; white-space:pre-wrap; }
+        .faq-item.open .faq-a { display:block; }
+        .faq-item.open .faq-mark { transform: rotate(45deg); }
+        .faq-mark { transition: transform .2s ease; display:inline-block; color: var(--shu); font-size:1.3rem; line-height:1.2; }
+        .faq-a strong { color: var(--sumi); }
+
+        /* ---- このアプリについて（クレジット） ----
+           Kids Category ではアプリ外へのリンクを parental gate の裏に置く必要があるため、
+           URL はリンクにせずテキストで示す。ここだけは選択・コピーできるようにしておく。 */
+        .credit-sec { padding: .85rem 0; border-top: 1px dashed rgba(139,90,43,.35); }
+        .credit-sec:first-child { border-top: 0; padding-top: 0; }
+        .credit-h { font-weight: 700; color: var(--sumi); font-size: .92rem; margin-bottom: .3rem; }
+        .credit-p { font-size: .82rem; line-height: 1.85; color: var(--sumi-soft); }
+        .credit-list { font-size: .8rem; line-height: 1.9; color: var(--sumi-soft); margin-top: .2rem; }
+        .privacy-updated { font-size: .76rem; color: var(--sumi-soft); margin-top: .9rem; text-align: right; }
+        .credit-url {
+            /* リンクではないので、リンク色は使わない（押せそうに見せない） */
+            display: block; font-size: .76rem; line-height: 1.7; color: var(--sumi-soft);
+            word-break: break-all; margin-top: .15rem;
+            user-select: text; -webkit-user-select: text;
+        }
+    </style>
+
+    <!-- ビルド済み Tailwind（使っているクラスだけ）。cdn.tailwindcss.com の置き換え。
+         CDN版は実行時にこの内容を生成して <style> を末尾へ差し込んでいたので、
+         見た目を変えないために、ここ（ページ内 <style> のあと）に読み込む。 -->
+    <link rel="stylesheet" href="assets/tailwind.css">
+</head>
+<body>
+
+<!-- ===================== SVG スプライト（すべて自前・外部画像なし） ===================== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+        <!-- だるま師匠 -->
+        <symbol id="i-daruma" viewBox="0 0 100 112">
+            <ellipse cx="50" cy="64" rx="43" ry="46" fill="#cf3a2e"/>
+            <path d="M7 64a43 46 0 0 1 86 0z" fill="#e2564a" opacity=".55"/>
+            <ellipse cx="50" cy="53" rx="28" ry="31" fill="#fdf6e6"/>
+            <path d="M29 37c5-5 12-5 17 0" stroke="#241f1b" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+            <path d="M54 37c5-5 12-5 17 0" stroke="#241f1b" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+            <ellipse cx="39" cy="50" rx="6" ry="7.5" fill="#241f1b"/>
+            <ellipse cx="61" cy="50" rx="6" ry="7.5" fill="#241f1b"/>
+            <circle cx="41" cy="47" r="2" fill="#fff"/>
+            <circle cx="63" cy="47" r="2" fill="#fff"/>
+            <path d="M50 60c-6 7-15 7-19 2M50 60c6 7 15 7 19 2" stroke="#241f1b" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+            <path d="M42 71q8 8 16 0" stroke="#241f1b" stroke-width="3" fill="none" stroke-linecap="round"/>
+            <path d="M14 92h72" stroke="#d4a017" stroke-width="6" stroke-linecap="round"/>
+            <path d="M20 101h60" stroke="#a52a20" stroke-width="4" stroke-linecap="round" opacity=".6"/>
+        </symbol>
+
+        <!-- 巻物 -->
+        <symbol id="i-scroll" viewBox="0 0 64 64">
+            <rect x="11" y="9" width="42" height="46" rx="3" fill="#fdf6e6" stroke="#c9b48a" stroke-width="2"/>
+            <path d="M21 22h22M21 31h22M21 40h15" stroke="#8a7a5c" stroke-width="3" stroke-linecap="round"/>
+            <rect x="5" y="4" width="54" height="9" rx="4.5" fill="#8b5a2b"/>
+            <rect x="5" y="51" width="54" height="9" rx="4.5" fill="#8b5a2b"/>
+            <path d="M5 8.5h54M5 55.5h54" stroke="#5f3d1d" stroke-width="1.5" opacity=".6"/>
+        </symbol>
+
+        <!-- 炎（リベンジ） -->
+        <symbol id="i-flame" viewBox="0 0 64 64">
+            <path d="M33 4c7 13-3 17-3 23 0 4 3 7 3 7s5-3 5-9c9 7 14 14 14 22 0 12-10 19-20 19S12 59 12 47c0-13 12-21 15-30 1-5 2-9 6-13z" fill="#cf3a2e"/>
+            <path d="M33 31c4 6 6 10 6 15 0 6-4 10-8 10s-8-4-8-10c0-6 6-9 10-15z" fill="#f2c53d"/>
+        </symbol>
+
+        <!-- きらり（あたらしい漢字） -->
+        <symbol id="i-spark" viewBox="0 0 64 64">
+            <path d="M34 6l7 18 18 7-18 7-7 18-7-18-18-7 18-7z" fill="#f2c53d" stroke="#c98f10" stroke-width="1.5" stroke-linejoin="round"/>
+            <circle cx="12" cy="14" r="3.5" fill="#ffe89a"/>
+            <circle cx="10" cy="47" r="2.5" fill="#ffe89a"/>
+        </symbol>
+
+        <!-- 提灯 -->
+        <symbol id="i-lantern" viewBox="0 0 60 96">
+            <path d="M30 0v8" stroke="#3a2b20" stroke-width="3"/>
+            <rect x="15" y="8" width="30" height="6" rx="2" fill="#3a2b20"/>
+            <ellipse cx="30" cy="48" rx="26" ry="33" fill="#cf3a2e"/>
+            <ellipse cx="30" cy="48" rx="26" ry="33" fill="url(#lanternShade)"/>
+            <g stroke="#8f2018" stroke-width="1.4" opacity=".75" fill="none">
+                <path d="M5 36h50M4 48h52M5 60h50"/>
+            </g>
+            <rect x="15" y="78" width="30" height="6" rx="2" fill="#3a2b20"/>
+            <path d="M30 84v9" stroke="#d4a017" stroke-width="3"/>
+        </symbol>
+        <linearGradient id="lanternShade" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#000" stop-opacity=".28"/>
+            <stop offset=".35" stop-color="#fff" stop-opacity=".18"/>
+            <stop offset="1" stop-color="#000" stop-opacity=".3"/>
+        </linearGradient>
+
+        <!-- 選択済みのチェック -->
+        <symbol id="i-check" viewBox="0 0 24 24">
+            <path d="M4.5 12.5l5 5.5L19.5 6" fill="none" stroke="currentColor"
+                  stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        </symbol>
+
+        <!-- 高札（よくあるしつもん） -->
+        <symbol id="i-kousatsu" viewBox="0 0 64 64">
+            <rect x="29" y="34" width="6" height="28" fill="#5f3d1d"/>
+            <rect x="8" y="8" width="48" height="30" rx="3" fill="#b6803f" stroke="#5f3d1d" stroke-width="2.5"/>
+            <path d="M17 18h30M17 26h20" stroke="#5f3d1d" stroke-width="3" stroke-linecap="round"/>
+        </symbol>
+    </defs>
+</svg>
+
+<!-- ===================== ホーム画面 ===================== -->
+<div id="view-home" class="view active scroll-y">
+    <div class="w-full max-w-3xl mx-auto flex flex-col">
+
+        <!-- のれん -->
+        <header class="relative pb-2">
+            <div class="beam wood-dark w-full"></div>
+            <svg class="lantern left"  viewBox="0 0 60 96"><use href="#i-lantern"/></svg>
+            <svg class="lantern right" viewBox="0 0 60 96"><use href="#i-lantern"/></svg>
+            <div class="noren px-4">
+                <div class="noren-pole wood-dark"></div>
+                <h1 class="noren-title" aria-label="スイスイ漢字道場">
+                    <span class="noren-valance" aria-hidden="true">スイスイ</span>
+                    <span class="noren-panels" aria-hidden="true">
+                        <span>漢</span><span>字</span><span>道</span><span>場</span>
+                    </span>
+                </h1>
+            </div>
+            <p class="text-center mt-3 text-sm tracking-widest" style="color:var(--sumi-soft)">
+                小学1〜6年生の書き順けいこ
+            </p>
+        </header>
+
+        <!-- 師匠のひとこと -->
+        <div class="flex items-center gap-3 px-5 mt-2">
+            <svg class="w-16 h-[4.6rem] flex-none drop-shadow-md" viewBox="0 0 100 112"><use href="#i-daruma"/></svg>
+            <div class="relative flex-1 bg-white rounded-xl px-4 py-3 text-sm leading-relaxed shadow"
+                 style="border:2px solid rgba(139,90,43,.45)">
+                <span class="absolute left-[-9px] top-6 w-0 h-0"
+                      style="border-top:8px solid transparent;border-bottom:8px solid transparent;border-right:9px solid #fff"></span>
+                <span id="master-line">よく来たな。きょうは どの帯に ちょうせんする？</span>
+            </div>
+        </div>
+
+        <div class="px-5 pb-8 pt-5 flex flex-col gap-6">
+
+            <!-- 学年えらび -->
+            <section>
+                <h2 class="brush text-xl mb-3 flex items-center gap-2" style="color:var(--ai)">
+                    <span class="impact text-sm text-white px-2 py-0.5 rounded" style="background:var(--ai)">壱</span>
+                    どの帯で けいこする？
+                </h2>
+                <div id="grade-chips" class="grid grid-cols-4 sm:grid-cols-7 gap-2"></div>
+            </section>
+
+            <!-- モードえらび -->
+            <section>
+                <h2 class="brush text-xl mb-4 flex items-center gap-2" style="color:var(--ai)">
+                    <span class="impact text-sm text-white px-2 py-0.5 rounded" style="background:var(--ai)">弐</span>
+                    どんな けいこにする？
+                </h2>
+                <div id="mode-cards" class="grid grid-cols-1 sm:grid-cols-3 gap-5"></div>
+            </section>
+
+            <!-- はじめる -->
+            <button id="btn-start" class="fuda w-full py-5 rounded-xl"
+                    style="background:linear-gradient(180deg,var(--shu),var(--shu-deep));border-color:var(--kin);box-shadow:0 5px 0 #7d2018,0 8px 16px rgba(0,0,0,.3)">
+                <span class="brush text-3xl">いざ、けいこ！</span>
+                <span class="block text-xs mt-1 tracking-widest opacity-90">ぜんぶで 15もん</span>
+            </button>
+
+            <!-- サブページ -->
+            <nav class="grid grid-cols-2 gap-4">
+                <button data-nav="zukan" class="fuda wood flex items-center justify-center gap-2 py-4 rounded-xl">
+                    <svg class="w-7 h-7" viewBox="0 0 64 64"><use href="#i-scroll"/></svg>
+                    <span class="brush text-lg">漢字ずかん</span>
+                </button>
+                <button data-nav="about" class="fuda wood flex items-center justify-center gap-2 py-4 rounded-xl">
+                    <svg class="w-7 h-7" viewBox="0 0 64 64"><use href="#i-kousatsu"/></svg>
+                    <span class="brush text-lg">おうちの方へ</span>
+                </button>
+            </nav>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== クイズ画面 ===================== -->
+<div id="view-quiz" class="view items-center justify-between">
+
+    <div class="w-full shrink-0">
+        <div class="beam wood-dark w-full"></div>
+        <div class="w-full max-w-2xl mx-auto px-5 pt-3 flex flex-col items-center gap-2.5">
+            <div class="flex justify-between w-full items-center gap-3">
+                <button id="btn-home" class="fuda wood text-sm px-3 py-2 rounded-lg shrink-0">← 道場の入口</button>
+                <p id="session-label" class="brush text-base truncate" style="color:var(--ai)"></p>
+                <p class="impact shrink-0 px-3 py-1 rounded-lg"
+                   style="background:#fffdf7;border:2px solid var(--sumi);box-shadow:0 3px 0 var(--sumi)">
+                    <span id="current-index" class="text-xl">1</span><span class="text-sm opacity-60"> / </span><span id="total-kanji" class="text-sm">15</span>
+                </p>
+            </div>
+            <div id="progress-stamps" class="flex flex-wrap justify-center gap-1.5"></div>
+        </div>
+    </div>
+
+    <div class="card-container flex-1 flex flex-col items-center justify-center w-full my-2 min-h-0">
+        <div id="card" class="relative flex flex-col items-center">
+            <div class="card-frame wood">
+                <div id="character-target-div">
+                    <div id="grade-label-badge">1年生で習う漢字</div>
+                    <svg class="grid-lines" id="grid-lines" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" preserveAspectRatio="none">
+                        <line x1="200" y1="0" x2="200" y2="400" />
+                        <line x1="0" y1="200" x2="400" y2="200" />
+                    </svg>
+                    <div id="hanzi-container"></div>
+                </div>
+            </div>
+
+            <div class="yomi flex flex-col gap-2 min-h-[5.2rem]" style="width: var(--card);">
+                <div class="flex items-start gap-3">
+                    <span class="yomi-tag" style="background:var(--ai)">音</span>
+                    <span id="on-readings" class="font-bold text-lg leading-relaxed flex-1 tracking-wider"></span>
+                </div>
+                <div class="flex items-start gap-3">
+                    <span class="yomi-tag" style="background:var(--shu)">訓</span>
+                    <span id="kun-readings" class="font-bold text-lg leading-relaxed flex-1 tracking-wider"></span>
+                </div>
+            </div>
+
+            <div id="particles-container" class="absolute top-0 left-0 w-full pointer-events-none z-10" style="height: var(--card);"></div>
+            <div id="kiai" class="kiai brush"></div>
+        </div>
+    </div>
+
+    <div class="w-full max-w-2xl px-5 pb-6 flex justify-between items-center shrink-0">
+        <button id="btn-prev" class="fuda wood py-4 px-7 rounded-xl flex items-center gap-2 text-lg brush">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7" /></svg>
+            前へ
+        </button>
+
+        <div class="kanji-font text-5xl font-bold px-5 py-1 rounded-lg"
+             id="current-kanji-display"
+             style="background:#fffdf7;border:2px solid rgba(139,90,43,.5);box-shadow:0 3px 0 rgba(139,90,43,.5)"></div>
+
+        <button id="btn-next" class="fuda py-4 px-7 rounded-xl flex items-center gap-2 text-lg brush"
+                style="background:linear-gradient(180deg,var(--shu),var(--shu-deep));box-shadow:0 4px 0 #7d2018,0 6px 10px rgba(0,0,0,.25)">
+            次へ
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7" /></svg>
+        </button>
+    </div>
+</div>
+
+<!-- ===================== 漢字ずかん ===================== -->
+<div id="view-zukan" class="view scroll-y">
+    <div class="w-full max-w-4xl mx-auto px-5 pb-10 flex flex-col gap-5">
+        <div class="flex items-center gap-3 sticky top-0 py-3 z-10" style="background:var(--washi)">
+            <button data-nav="home" class="fuda wood text-sm px-3 py-2 rounded-lg">← 道場の入口</button>
+            <h1 class="brush text-2xl" style="color:var(--ai)">漢字ずかん</h1>
+        </div>
+
+        <div class="shoji p-5">
+            <p class="text-sm mb-3" style="color:var(--sumi-soft)">いままでに出会った漢字が くっきり見えるよ。ぜんぶ集めよう！</p>
+            <div class="flex items-end gap-3">
+                <p class="impact text-4xl" style="color:var(--shu)"><span id="zukan-total-seen">0</span></p>
+                <p class="text-lg mb-1" style="color:var(--sumi-soft)">/ 1026 字</p>
+            </div>
+            <div class="w-full h-4 mt-3 rounded-sm overflow-hidden" style="background:#eee6d3;border:1px solid rgba(139,90,43,.4)">
+                <div id="zukan-total-bar" class="h-full transition-all duration-500 w-0" style="background:linear-gradient(90deg,var(--shu),var(--kin))"></div>
+            </div>
+            <div class="flex flex-wrap gap-4 mt-4 text-xs" style="color:var(--sumi-soft)">
+                <span class="flex items-center gap-1.5"><span class="zukan-cell seen kanji-font w-6 h-6 text-base rounded-sm">漢</span>出会ったことがある</span>
+                <span class="flex items-center gap-1.5"><span class="zukan-cell unseen kanji-font w-6 h-6 text-base rounded-sm">字</span>まだ出会っていない</span>
+                <span class="flex items-center gap-1.5"><span class="zukan-cell seen weak kanji-font w-6 h-6 text-base rounded-sm">難</span>にがて（ミス3回以上）</span>
+            </div>
+        </div>
+
+        <div id="zukan-body" class="flex flex-col gap-6"></div>
+    </div>
+</div>
+
+<!-- ===================== おうちの方へ =====================
+     よくあるしつもん・クレジット・プライバシーをまとめた、保護者向けの読みもの。
+     文章はすべて content.js にある。 -->
+<div id="view-about" class="view scroll-y">
+    <div class="w-full max-w-3xl mx-auto px-5 pb-10 flex flex-col gap-4">
+        <div class="flex items-center gap-3 sticky top-0 py-3 z-10" style="background:var(--washi)">
+            <button data-nav="home" class="fuda wood text-sm px-3 py-2 rounded-lg">← 道場の入口</button>
+            <h1 class="brush text-2xl" style="color:var(--ai)">おうちの方へ</h1>
+        </div>
+        <p id="faq-intro" class="text-sm leading-relaxed shoji p-5 whitespace-pre-line" style="color:var(--sumi-soft)"></p>
+
+        <h2 class="brush text-xl mt-3" style="color:var(--ai)">よくあるしつもん</h2>
+        <div id="faq-body" class="flex flex-col gap-3"></div>
+
+        <h2 class="brush text-xl mt-4" style="color:var(--ai)">このアプリについて</h2>
+        <div id="credits-body" class="shoji p-5"></div>
+
+        <h2 class="brush text-xl mt-4" style="color:var(--ai)">プライバシーについて</h2>
+        <div id="privacy-body" class="shoji p-5"></div>
+    </div>
+</div>
+
+<script>
+/* =====================================================================
+ * データ：学年別漢字配当表（2017年告示 / 2020年度全面実施・全1026字）
+ * ===================================================================== */
+const GRADE_KANJI = {
+    1: "一右雨円王音下火花貝学気九休玉金空月犬見五口校左三山子四糸字耳七車手十出女小上森人水正生青夕石赤千川先早草足村大男竹中虫町天田土二日入年白八百文木本名目立力林六".split(''),
+    2: "引羽雲園遠何科夏家歌画回会海絵外角楽活間丸岩顔汽記帰弓牛魚京強教近兄形計元言原戸古午後語工公広交光考行高黄合谷国黒今才細作算止市矢姉思紙寺自時室社弱首秋週春書少場色食心新親図数西声星晴切雪船線前組走多太体台地池知茶昼長鳥朝直通弟店点電刀冬当東答頭同道読内南肉馬売買麦半番父風分聞米歩母方北毎妹万明鳴毛門夜野友用曜来里理話".split(''),
+    3: "悪安暗医委意育員院飲運泳駅央横屋温化荷界開階寒感漢館岸起期客究急級宮球去橋業曲局銀区苦具君係軽血決研県庫湖向幸港号根祭皿仕死使始指歯詩次事持式実写者主守取酒受州拾終習集住重宿所暑助昭消商章勝乗植申身神真深進世整昔全相送想息速族他打対待代第題炭短談着注柱丁帳調追定庭笛鉄転都度投豆島湯登等動童農波配倍箱畑発反坂板皮悲美鼻筆氷表秒病品負部服福物平返勉放味命面問役薬由油有遊予羊洋葉陽様落流旅両緑礼列練路和".split(''),
+    4: "愛案以衣位茨印英栄媛塩岡億加果貨課芽賀改械害街各覚潟完官管関観願岐希季旗器機議求泣給挙漁共協鏡競極熊訓軍郡群径景芸欠結建健験固功好香候康佐差菜最埼材崎昨札刷察参産散残氏司試児治滋辞鹿失借種周祝順初松笑唱焼照城縄臣信井成省清静席積折節説浅戦選然争倉巣束側続卒孫帯隊達単置仲沖兆低底的典伝徒努灯働特徳栃奈梨熱念敗梅博阪飯飛必票標不夫付府阜富副兵別辺変便包法望牧末満未民無約勇要養浴利陸良料量輪類令冷例連老労録".split(''),
+    5: "圧囲移因永営衛易益液演応往桜可仮価河過快解格確額刊幹慣眼紀基寄規喜技義逆久旧救居許境均禁句型経潔件険検限現減故個護効厚耕航鉱構興講告混査再災妻採際在財罪殺雑酸賛士支史志枝師資飼示似識質舎謝授修述術準序招証象賞条状常情織職制性政勢精製税責績接設絶祖素総造像増則測属率損貸態団断築貯張停提程適統堂銅導得毒独任燃能破犯判版比肥非費備評貧布婦武復複仏粉編弁保墓報豊防貿暴脈務夢迷綿輸余容略留領歴".split(''),
+    6: "胃異遺域宇映延沿恩我灰拡革閣割株干巻看簡危机揮貴疑吸供胸郷勤筋系敬警劇激穴券絹権憲源厳己呼誤后孝皇紅降鋼刻穀骨困砂座済裁策冊蚕至私姿視詞誌磁射捨尺若樹収宗就衆従縦縮熟純処署諸除承将傷障蒸針仁垂推寸盛聖誠舌宣専泉洗染銭善奏窓創装層操蔵臓存尊退宅担探誕段暖値宙忠著庁頂腸潮賃痛敵展討党糖届難乳認納脳派拝背肺俳班晩否批秘俵腹奮並陛閉片補暮宝訪亡忘棒枚幕密盟模訳郵優預幼欲翌乱卵覧裏律臨朗論".split('')
+};
+
+const QUESTIONS_PER_SESSION = 15;
+const REVENGE_THRESHOLD = 3;   // 正解までのミスがこの回数以上なら「にがて」
+// 読みは全部出すと「上」で訓が15個になり、パネルが伸びてナビに重なる。
+// 小学生に見せる量としても多すぎるので上限を設ける。
+const MAX_ON_READINGS = 4;
+const MAX_KUN_READINGS = 6;
+const GUIDE_HIDE_STREAK = 3;   // ノーミス連続でこの回数を超えたら十字ガイドを消す
+
+/* =====================================================================
+ * 永続データ（localStorage）
+ *   kanji[文字] = {
+ *     s: 出題された回数        … 「あたらしい漢字」「漢字ずかん」で使用
+ *     m: 直近セッションで正解までに受けた誤り判定の数 … 「リベンジ」で使用
+ *     p: 連続ノーミス正解回数  … 十字ガイドを消す条件
+ *   }
+ *   m は正解した時点で「上書き」するため、同じ漢字が複数セッションに
+ *   登場しても常に最新セッションの値だけが残る。
+ * ===================================================================== */
+const STORAGE_KEY = 'suisui-kanji-v1';
+const READINGS_KEY = 'suisui-readings-v2';
+
+let store = (function loadStore() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && parsed.kanji) return parsed;
+        }
+    } catch (e) { /* 壊れていたら作り直す */ }
+    return { version: 1, kanji: {} };
+})();
+
+function saveStore() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(store)); }
+    catch (e) { console.warn('保存に失敗しました', e); }
+}
+
+function recordOf(char) {
+    return store.kanji[char] || (store.kanji[char] = { s: 0, m: 0, p: 0 });
+}
+function seenCount(char)     { const r = store.kanji[char]; return r ? (r.s || 0) : 0; }
+function mistakeCount(char)  { const r = store.kanji[char]; return r ? (r.m || 0) : 0; }
+function perfectStreak(char) { const r = store.kanji[char]; return r ? (r.p || 0) : 0; }
+function isSeen(char)        { return seenCount(char) > 0; }
+function isWeak(char)        { return mistakeCount(char) >= REVENGE_THRESHOLD; }
+
+function markPresented(char) {
+    const r = recordOf(char);
+    r.s = (r.s || 0) + 1;
+    saveStore();
+}
+
+function markCompleted(char, mistakes) {
+    const r = recordOf(char);
+    r.m = mistakes;                        // 最新セッションの値で上書き
+    r.p = mistakes === 0 ? (r.p || 0) + 1 : 0;
+    saveStore();
+}
+
+/* 音訓読みのキャッシュ（同じ漢字を何度も取りに行かない） */
+let readingsCache = (function () {
+    try { return JSON.parse(localStorage.getItem(READINGS_KEY)) || {}; }
+    catch (e) { return {}; }
+})();
+function saveReadings() {
+    try { localStorage.setItem(READINGS_KEY, JSON.stringify(readingsCache)); }
+    catch (e) { /* 容量オーバーなどは無視 */ }
+}
+
+/* =====================================================================
+ * 出題プールとセッション組み立て
+ * ===================================================================== */
+// 学年は「帯の色」で表す。白帯（1年）から黒帯（6年）、全学年は金帯。
+const GRADE_OPTIONS = [
+    { key: '1',   label: '1年',   belt: '白帯',   color: '#f4f1e6', ink: '#241f1b' },
+    { key: '2',   label: '2年',   belt: '黄帯',   color: '#f2c53d', ink: '#4a3a10' },
+    { key: '3',   label: '3年',   belt: '緑帯',   color: '#2f7d40', ink: '#ffffff' },
+    { key: '4',   label: '4年',   belt: '青帯',   color: '#2f6fb5', ink: '#ffffff' },
+    { key: '5',   label: '5年',   belt: '茶帯',   color: '#8a5a2b', ink: '#ffffff' },
+    { key: '6',   label: '6年',   belt: '黒帯',   color: '#2b2b2b', ink: '#ffffff' },
+    { key: 'all', label: '全学年', belt: '金帯',   color: '#d4a017', ink: '#3a2b05' }
+];
+
+// label が主（漢語）、sub が従（カタカナの言いかえ）。
+const MODE_OPTIONS = [
+    { key: 'normal',  label: '稽古', sub: 'ノーマル',     icon: 'i-scroll', desc: 'えらんだ学年からランダムに15もん。' },
+    { key: 'revenge', label: '復習', sub: 'リベンジ',     icon: 'i-flame',  desc: 'まちがえやすい漢字を優先して15もん。' },
+    { key: 'new',     label: '初見', sub: 'ニューフェイス', icon: 'i-spark',  desc: 'まだ出会っていない漢字を優先して15もん。' }
+];
+
+// 師匠のひとこと（モードごと）
+const MASTER_LINES = {
+    normal:  'よく来たな。きょうは どの帯に ちょうせんする？',
+    revenge: 'にがてな字ほど、のびしろがあるものじゃ。',
+    new:     'はじめての字との出会いは、たからものじゃぞ。'
+};
+
+function gradeOption(key) { return GRADE_OPTIONS.find(o => o.key === String(key)); }
+
+let selectedGrade = 'all';
+let selectedMode = 'normal';
+
+function poolFor(gradeKey) {
+    const grades = gradeKey === 'all' ? [1, 2, 3, 4, 5, 6] : [Number(gradeKey)];
+    const pool = [];
+    grades.forEach(g => GRADE_KANJI[g].forEach(char => pool.push({ char: char, grade: g })));
+    return pool;
+}
+
+function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+}
+
+/**
+ * 優先グループから先に詰め、足りない分を残りからランダムに補充する。
+ * （例：該当が10字なら10字すべて＋残り5問を非該当から）
+ */
+function buildSession(gradeKey, mode) {
+    const pool = poolFor(gradeKey);
+    if (mode === 'normal') return shuffle(pool).slice(0, QUESTIONS_PER_SESSION);
+
+    let priority, rest;
+    if (mode === 'revenge') {
+        priority = pool.filter(k => isWeak(k.char));
+        rest     = pool.filter(k => !isWeak(k.char));
+        // ミスの多い漢字ほど先に（同数はランダム）
+        priority = shuffle(priority).sort((a, b) => mistakeCount(b.char) - mistakeCount(a.char));
+    } else { // 'new'
+        priority = shuffle(pool.filter(k => !isSeen(k.char)));
+        rest     = pool.filter(k => isSeen(k.char));
+    }
+
+    const picked = priority.slice(0, QUESTIONS_PER_SESSION);
+    if (picked.length < QUESTIONS_PER_SESSION) {
+        picked.push(...shuffle(rest).slice(0, QUESTIONS_PER_SESSION - picked.length));
+    }
+    return shuffle(picked); // 出題順そのものはランダムにする
+}
+
+/* 対象学年のなかで「にがて」「みまだ」が何字あるかを数える（ホームの表示用） */
+function poolSummary(gradeKey) {
+    const pool = poolFor(gradeKey);
+    let weak = 0, unseen = 0;
+    pool.forEach(k => {
+        if (isWeak(k.char)) weak++;
+        if (!isSeen(k.char)) unseen++;
+    });
+    return { total: pool.length, weak: weak, unseen: unseen };
+}
+
+/* =====================================================================
+ * 画面切り替え
+ * ===================================================================== */
+const VIEWS = ['home', 'quiz', 'zukan', 'about'];
+let currentView = 'home';
+
+function showView(name) {
+    VIEWS.forEach(v => {
+        document.getElementById('view-' + v).classList.toggle('active', v === name);
+    });
+    currentView = name;
+    if (name === 'home') refreshHome();
+    if (name === 'zukan') buildZukan();
+}
+
+/* =====================================================================
+ * ホーム画面
+ * ===================================================================== */
+function buildHome() {
+    const gradeWrap = document.getElementById('grade-chips');
+    gradeWrap.innerHTML = '';
+    GRADE_OPTIONS.forEach(opt => {
+        const b = document.createElement('button');
+        b.className = 'belt';
+        b.dataset.grade = opt.key;
+        b.style.setProperty('--belt', opt.color);
+        b.style.setProperty('--belt-ink', opt.ink);
+        b.innerHTML =
+            '<span class="belt-grade">' + opt.label + '</span>' +
+            '<span class="belt-name">' + opt.belt + '</span>' +
+            '<span class="pick"><svg viewBox="0 0 24 24"><use href="#i-check"/></svg></span>';
+        b.setAttribute('aria-pressed', String(opt.key === selectedGrade));
+        b.addEventListener('click', () => {
+            selectedGrade = opt.key;
+            refreshHome();
+        });
+        gradeWrap.appendChild(b);
+    });
+
+    const modeWrap = document.getElementById('mode-cards');
+    modeWrap.innerHTML = '';
+    MODE_OPTIONS.forEach(opt => {
+        const b = document.createElement('button');
+        b.className = 'makimono';
+        b.dataset.mode = opt.key;
+        b.setAttribute('aria-pressed', String(opt.key === selectedMode));
+        b.innerHTML =
+            '<div class="mode-head">' +
+                '<svg class="mode-icon" viewBox="0 0 64 64"><use href="#' + opt.icon + '"/></svg>' +
+                '<span class="mode-title">' + opt.label + '</span>' +
+                '<span class="mode-sub">' + opt.sub + '</span>' +
+            '</div>' +
+            '<p class="mode-desc">' + opt.desc + '</p>' +
+            '<p class="mode-hint"></p>' +
+            '<span class="pick"><svg viewBox="0 0 24 24"><use href="#i-check"/></svg></span>';
+        b.addEventListener('click', () => {
+            selectedMode = opt.key;
+            refreshHome();
+        });
+        modeWrap.appendChild(b);
+    });
+}
+
+function refreshHome() {
+    const summary = poolSummary(selectedGrade);
+
+    document.getElementById('master-line').textContent = MASTER_LINES[selectedMode];
+
+    document.querySelectorAll('#grade-chips .belt').forEach(b => {
+        b.setAttribute('aria-pressed', String(b.dataset.grade === selectedGrade));
+    });
+
+    document.querySelectorAll('#mode-cards .makimono').forEach(b => {
+        b.setAttribute('aria-pressed', String(b.dataset.mode === selectedMode));
+        const hint = b.querySelector('.mode-hint');
+        if (b.dataset.mode === 'revenge') {
+            hint.textContent = 'いまのにがて：' + summary.weak + ' 字';
+        } else if (b.dataset.mode === 'new') {
+            hint.textContent = 'まだ出会っていない：' + summary.unseen + ' 字';
+        } else {
+            hint.textContent = '対象：' + summary.total + ' 字';
+        }
+    });
+}
+
+/* =====================================================================
+ * クイズ本体
+ * ===================================================================== */
+let sessionKanji = [];
+let currentIndex = 0;
+let writer = null;
+let clearedIndices = new Set();
+let isGameCleared = false;
+let advanceTimer = null;
+
+/* 進捗＝15個の判子マス。クリアしたマスに「合」が捺される。 */
+function renderProgress() {
+    const wrap = document.getElementById('progress-stamps');
+    wrap.innerHTML = '';
+    for (let i = 0; i < sessionKanji.length; i++) {
+        const cell = document.createElement('div');
+        const done = clearedIndices.has(i);
+        cell.className = 'stamp' + (done ? ' done' : '') + (i === currentIndex ? ' now' : '');
+        cell.innerHTML = '<svg viewBox="0 0 24 24"><use href="#i-check"/></svg>';
+        wrap.appendChild(cell);
+    }
+}
+
+/* 「喝！」「一本！」などの気合いを一瞬だけ出す */
+function showKiai(text, color) {
+    const el = document.getElementById('kiai');
+    el.textContent = text;
+    el.style.color = color;
+    el.classList.remove('show');
+    void el.offsetWidth; // force reflow
+    el.classList.add('show');
+}
+
+function sessionLabel() {
+    const g = gradeOption(selectedGrade);
+    const m = MODE_OPTIONS.find(o => o.key === selectedMode);
+    return g.belt + ' ・ ' + m.label;
+}
+
+function startSession() {
+    if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+    sessionKanji = buildSession(selectedGrade, selectedMode);
+    currentIndex = 0;
+    clearedIndices = new Set();
+    isGameCleared = false;
+    removeClearOverlay();
+    document.getElementById('session-label').textContent = sessionLabel();
+    document.getElementById('total-kanji').textContent = sessionKanji.length;
+    renderProgress();
+    showView('quiz');
+    renderKanji(true);
+}
+
+function quitSession() {
+    if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+    if (writer) { try { writer.cancelQuiz(); } catch (e) {} }
+    writer = null;
+    document.getElementById('hanzi-container').innerHTML = '';
+    removeClearOverlay();
+    showView('home');
+}
+
+/* --- Web Audio API（最初のタップで初期化する） --- */
+let audioCtx = null;
+function ensureAudio() {
+    if (!audioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (Ctx) audioCtx = new Ctx();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+/* ホワイトノイズは使い回す（コンテキストごとに1本だけ作る） */
+function getNoiseBuffer(ctx) {
+    if (!ctx.__noiseBuffer) {
+        const len = Math.floor(ctx.sampleRate * 0.4);
+        const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+        ctx.__noiseBuffer = buf;
+    }
+    return ctx.__noiseBuffer;
+}
+
+/**
+ * 「シャッ」＝刀を振り抜くような音。
+ * ホワイトノイズのバンドパスを一気に上げてから落とすと、風を切る感じになる。
+ * 立ち上がりを速く・余韻を短くするのが「シャッ」に聞こえるコツ。
+ */
+function buildSwish(ctx, destination, startTime, volume) {
+    const dur = 0.16;
+    const vol = (volume === undefined) ? 0.75 : volume;   // 他の効果音と音量感がそろう値
+
+    const src = ctx.createBufferSource();
+    src.buffer = getNoiseBuffer(ctx);
+
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.Q.value = 1.1;
+    band.frequency.setValueAtTime(700, startTime);
+    band.frequency.exponentialRampToValueAtTime(5200, startTime + dur * 0.4);
+    band.frequency.exponentialRampToValueAtTime(1200, startTime + dur);
+
+    const hp = ctx.createBiquadFilter();   // 低音を切って軽さを出す
+    hp.type = 'highpass';
+    hp.frequency.value = 500;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(vol, startTime + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0008, startTime + dur);
+
+    src.connect(band);
+    band.connect(hp);
+    hp.connect(gain);
+    gain.connect(destination);
+
+    src.start(startTime);
+    src.stop(startTime + dur + 0.02);
+    return dur;
+}
+
+function playSound(type) {
+    if (!audioCtx || audioCtx.state !== 'running') return;
+    const now = audioCtx.currentTime;
+
+    if (type === 'stroke') {
+        buildSwish(audioCtx, audioCtx.destination, now);
+
+    } else if (type === 'success') {
+        const frequencies = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+        frequencies.forEach((freq, i) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            const time = now + (i * 0.08);
+            osc.frequency.setValueAtTime(freq, time);
+            gain.gain.setValueAtTime(0, time);
+            gain.gain.linearRampToValueAtTime(0.2, time + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.01, time + 0.5);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(time); osc.stop(time + 0.5);
+        });
+
+    } else if (type === 'error') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.exponentialRampToValueAtTime(100, now + 0.2);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.2);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(now); osc.stop(now + 0.2);
+    }
+}
+
+function createParticles() {
+    const container = document.getElementById('particles-container');
+    const colors = ['#FCD34D', '#F472B6', '#60A5FA', '#34D399', '#A78BFA'];
+
+    for (let i = 0; i < 40; i++) {
+        const p = document.createElement('div');
+        p.classList.add('particle');
+
+        const size = Math.random() * 12 + 6;
+        p.style.width = size + 'px';
+        p.style.height = size + 'px';
+        p.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+        p.style.left = '50%';
+        p.style.top = '50%';
+
+        const angle = Math.random() * Math.PI * 2;
+        const distance = Math.random() * 150 + 80;
+        p.style.setProperty('--tx', Math.cos(angle) * distance + 'px');
+        p.style.setProperty('--ty', Math.sin(angle) * distance + 'px');
+
+        container.appendChild(p);
+        setTimeout(() => p.remove(), 800);
+    }
+}
+
+function removeClearOverlay() {
+    const old = document.getElementById('clear-overlay');
+    if (old) old.remove();
+}
+
+function fireCrackers() {
+    const duration = 3000;
+    const end = Date.now() + duration;
+
+    (function frame() {
+        const colors = ['#cf3a2e', '#d4a017', '#22406e', '#3f9b52', '#fdf6e6', '#8b5a2b'];
+        confetti({ particleCount: 5, angle: 60,  spread: 55, origin: { x: 0, y: 0.8 }, colors: colors });
+        confetti({ particleCount: 5, angle: 120, spread: 55, origin: { x: 1, y: 0.8 }, colors: colors });
+        if (Date.now() < end) requestAnimationFrame(frame);
+    }());
+
+    const clearMsg = document.createElement('div');
+    clearMsg.id = 'clear-overlay';
+    clearMsg.className = 'fixed inset-0 z-50 flex flex-col items-center justify-center px-6';
+    clearMsg.style.background = 'rgba(253,246,230,.94)';
+    clearMsg.innerHTML =
+        '<div class="relative mb-10 px-10 py-8 text-center" style="background:#fffdf7;border:4px double var(--sumi);box-shadow:0 12px 30px rgba(0,0,0,.25);animation: dropIn 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;">' +
+            '<p class="brush tracking-[0.5em] text-sm" style="color:var(--sumi-soft)">スイスイ漢字道場</p>' +
+            '<h1 class="brush text-6xl md:text-8xl mt-2" style="color:var(--sumi)">免許皆伝</h1>' +
+            '<div class="absolute -right-6 -bottom-6 flex items-center justify-center" ' +
+                 'style="width:96px;height:96px;border:5px solid var(--shu);border-radius:10px;color:var(--shu);' +
+                 'font-family:var(--font-brush);font-size:2.4rem;line-height:1.1;background:rgba(255,255,255,.6);' +
+                 'animation: sealSlam .7s cubic-bezier(.2,1.4,.4,1) .5s both;">合格</div>' +
+        '</div>' +
+        '<div class="flex flex-col sm:flex-row gap-4 opacity-0" style="animation: fadeIn 0.5s ease 1.4s forwards;">' +
+            '<button id="btn-again" class="fuda brush text-2xl py-4 px-10 rounded-xl" style="background:linear-gradient(180deg,var(--shu),var(--shu-deep));box-shadow:0 4px 0 #7d2018,0 6px 12px rgba(0,0,0,.25)">もう一本！</button>' +
+            '<button id="btn-back-home" class="fuda wood brush text-2xl py-4 px-10 rounded-xl">道場の入口へ</button>' +
+        '</div>';
+    document.body.appendChild(clearMsg);
+
+    document.getElementById('btn-again').addEventListener('click', () => { removeClearOverlay(); startSession(); });
+    document.getElementById('btn-back-home').addEventListener('click', quitSession);
+}
+
+function showReadings(char) {
+    const onEl = document.getElementById('on-readings');
+    const kunEl = document.getElementById('kun-readings');
+
+    // 同梱の読み（assets/readings.js）。1026字すべて入っているので通常はここで返る。
+    // それでも無いときのために、localStorage のキャッシュと通信の経路は残してある。
+    const bundled = (typeof KANJI_READINGS !== 'undefined') ? KANJI_READINGS[char] : null;
+    const cached = bundled || readingsCache[char];
+    if (cached) {
+        onEl.textContent = cached.on;
+        kunEl.textContent = cached.kun;
+        return;
+    }
+
+    onEl.textContent = '...';
+    kunEl.textContent = '...';
+
+    fetch('https://kanjiapi.dev/v1/kanji/' + encodeURIComponent(char))
+        .then(res => res.json())
+        .then(data => {
+            // 「ひと.しい」の送り仮名ドットと、「-うえ」「うわ-」の接辞ハイフンを落とし、
+            // 重複をまとめてから上限件数で切る（切ったときは末尾に「ほか」）
+            const tidy = (list, max) => {
+                const uniq = list
+                    .map(r => r.replace(/\./g, '').replace(/^-+|-+$/g, ''))
+                    .filter(r => r.length > 0)
+                    .filter((r, i, a) => a.indexOf(r) === i);
+                if (uniq.length === 0) return '（なし）';
+                return uniq.length > max
+                    ? uniq.slice(0, max).join('、') + ' ほか'
+                    : uniq.join('、');
+            };
+            const on = tidy(data.on_readings, MAX_ON_READINGS);
+            const kun = tidy(data.kun_readings, MAX_KUN_READINGS);
+            readingsCache[char] = { on: on, kun: kun };
+            saveReadings();
+            // 表示中の漢字が変わっていなければ反映
+            if (sessionKanji[currentIndex] && sessionKanji[currentIndex].char === char) {
+                onEl.textContent = on;
+                kunEl.textContent = kun;
+            }
+        })
+        .catch(err => {
+            console.error('Failed to fetch kanji readings', err);
+            if (sessionKanji[currentIndex] && sessionKanji[currentIndex].char === char) {
+                onEl.textContent = '取得できませんでした';
+                kunEl.textContent = '取得できませんでした';
+            }
+        });
+}
+
+function renderKanji(animateIn) {
+    const currentItem = sessionKanji[currentIndex];
+    if (!currentItem) return;
+    const char = currentItem.char;
+    const targetDiv = document.getElementById('character-target-div');
+    const hanziContainer = document.getElementById('hanzi-container');
+    const badge = document.getElementById('grade-label-badge');
+
+    // 「出題された」記録（漢字ずかん・あたらしい漢字モードで使用）
+    markPresented(char);
+
+    if (animateIn) {
+        const card = document.getElementById('card');
+        card.classList.remove('card-enter');
+        void card.offsetWidth; // force reflow
+        card.classList.add('card-enter');
+    }
+
+    document.getElementById('current-kanji-display').textContent = char;
+    document.getElementById('current-index').textContent = currentIndex + 1;
+    document.getElementById('total-kanji').textContent = sessionKanji.length;
+
+    showReadings(char);
+    renderProgress();
+
+    // 学年バッジ＝その学年の帯色の木札。クリア済みなら朱の合格印に変わる。
+    const belt = gradeOption(currentItem.grade);
+    if (clearedIndices.has(currentIndex)) {
+        badge.textContent = currentItem.grade + '年生で習う漢字 ・ 合格';
+        badge.style.setProperty('--belt', '#cf3a2e');
+        badge.style.setProperty('--belt-ink', '#ffffff');
+    } else {
+        badge.textContent = currentItem.grade + '年生で習う漢字（' + belt.belt + '）';
+        badge.style.setProperty('--belt', belt.color);
+        badge.style.setProperty('--belt-ink', belt.ink);
+    }
+
+    // 十字ガイド：ノーミス正解が続いている漢字では消す
+    const gridLines = document.getElementById('grid-lines');
+    gridLines.style.opacity = perfectStreak(char) >= GUIDE_HIDE_STREAK ? '0' : '1';
+
+    hanziContainer.innerHTML = '';
+    writer = HanziWriter.create('hanzi-container', char, {
+        width: CARD_SIZE,
+        height: CARD_SIZE,
+        padding: Math.round(CARD_SIZE * 0.05),
+        showOutline: true,
+        strokeAnimationSpeed: 2,
+        delayBetweenStrokes: 50,
+        strokeColor: '#3B82F6',
+        highlightColor: '#EF4444',
+        outlineColor: '#E5E7EB',
+        drawingWidth: 28,
+        drawingColor: '#1E3A8A',
+        charDataLoader: function (char, onLoad, onError) {
+            fetch('https://cdn.jsdelivr.net/gh/mnako/hanzi-writer-data-ja@master/data/' + char + '.json')
+                .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+                .then(onLoad)
+                .catch(() => {
+                    fetch('https://cdn.jsdelivr.net/npm/hanzi-writer-data-jp@0/' + char + '.json')
+                        .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+                        .then(onLoad)
+                        .catch(onError);
+                });
+        }
+    });
+
+    writer.quiz({
+        onMistake: () => {
+            playSound('error');
+            showKiai('喝！', '#cf3a2e');
+            targetDiv.classList.remove('shake');
+            void targetDiv.offsetWidth;
+            targetDiv.classList.add('shake');
+            gridLines.style.opacity = '1';
+        },
+        onCorrectStroke: () => {
+            playSound('stroke');
+            targetDiv.classList.remove('shake');
+        },
+        onComplete: (summaryData) => {
+            playSound('success');
+            createParticles();
+            showKiai(summaryData.totalMistakes === 0 ? '一本！' : '合', '#d4a017');
+
+            // 正解までに受けた誤り判定の数を記録（最新セッションの値で上書き）
+            markCompleted(char, summaryData.totalMistakes);
+
+            clearedIndices.add(currentIndex);
+            renderProgress();
+
+            advanceTimer = setTimeout(() => {
+                advanceTimer = null;
+                if (currentView !== 'quiz') return;
+                if (clearedIndices.size === sessionKanji.length && !isGameCleared) {
+                    isGameCleared = true;
+                    fireCrackers();
+                } else if (!isGameCleared) {
+                    // まだクリアしていない問題を探して遷移する
+                    let nextIndex = currentIndex + 1;
+                    while (nextIndex < sessionKanji.length && clearedIndices.has(nextIndex)) nextIndex++;
+                    if (nextIndex >= sessionKanji.length) {
+                        nextIndex = 0;
+                        while (nextIndex < currentIndex && clearedIndices.has(nextIndex)) nextIndex++;
+                    }
+                    currentIndex = nextIndex;
+                    renderKanji(true);
+                }
+            }, 1500);
+        }
+    });
+}
+
+/* =====================================================================
+ * 漢字ずかん
+ * ===================================================================== */
+function buildZukan() {
+    const body = document.getElementById('zukan-body');
+    body.innerHTML = '';
+
+    let totalSeen = 0, total = 0;
+
+    for (let g = 1; g <= 6; g++) {
+        const chars = GRADE_KANJI[g];
+        const seen = chars.filter(isSeen).length;
+        totalSeen += seen;
+        total += chars.length;
+
+        const belt = gradeOption(g);
+        const section = document.createElement('section');
+        section.className = 'shoji p-4';
+
+        const head = document.createElement('div');
+        head.className = 'flex items-center justify-between mb-3';
+        head.innerHTML =
+            '<h2 class="brush text-lg px-3 py-0.5 rounded" ' +
+                'style="background:' + belt.color + ';color:' + belt.ink + ';border:2px solid rgba(0,0,0,.28)">' +
+                g + '年生 ・ ' + belt.belt + '</h2>' +
+            '<p class="impact text-sm" style="color:var(--sumi-soft)">' + seen + ' / ' + chars.length + '</p>';
+        section.appendChild(head);
+
+        const grid = document.createElement('div');
+        grid.className = 'zukan-grid';
+        chars.forEach(char => {
+            const cell = document.createElement('div');
+            cell.className = 'zukan-cell kanji-font ' + (isSeen(char) ? 'seen' : 'unseen');
+            if (isSeen(char) && isWeak(char)) cell.classList.add('weak');
+            cell.textContent = char;
+            grid.appendChild(cell);
+        });
+        section.appendChild(grid);
+        body.appendChild(section);
+    }
+
+    document.getElementById('zukan-total-seen').textContent = totalSeen;
+    document.getElementById('zukan-total-bar').style.width = ((totalSeen / total) * 100) + '%';
+}
+
+
+function buildPrivacy() {
+    const items = PRIVACY.slice();
+    if (PRIVACY_CONTACT) {
+        items.push({ h: 'お問い合わせ', p: PRIVACY_CONTACT });
+    }
+    const body = document.getElementById('privacy-body');
+    body.innerHTML = '';
+    renderSections(body, items);
+
+    const upd = document.createElement('p');
+    upd.className = 'privacy-updated';
+    upd.textContent = '最終更新：' + PRIVACY_UPDATED;
+    body.appendChild(upd);
+}
+
+/* クレジット欄とプライバシー欄で共通の描画処理 */
+function renderSections(body, sections) {
+    sections.forEach(c => {
+        const sec = document.createElement('section');
+        sec.className = 'credit-sec';
+
+        const h = document.createElement('div');
+        h.className = 'credit-h';
+        h.textContent = c.h;
+        sec.appendChild(h);
+
+        if (c.p) {
+            const p = document.createElement('p');
+            p.className = 'credit-p';
+            p.textContent = c.p;
+            sec.appendChild(p);
+        }
+        if (c.list) {
+            const ul = document.createElement('div');
+            ul.className = 'credit-list';
+            c.list.forEach(line => {
+                const d = document.createElement('div');
+                d.textContent = '・' + line;
+                ul.appendChild(d);
+            });
+            sec.appendChild(ul);
+        }
+        if (c.note) {
+            const n = document.createElement('p');
+            n.className = 'credit-p';
+            n.style.marginTop = '.35rem';
+            n.textContent = c.note;
+            sec.appendChild(n);
+        }
+        (c.urls || []).forEach(u => {
+            const s = document.createElement('span');
+            s.className = 'credit-url';
+            s.textContent = u;
+            sec.appendChild(s);
+        });
+
+        body.appendChild(sec);
+    });
+}
+
+function buildCredits() {
+    const body = document.getElementById('credits-body');
+    body.innerHTML = '';
+    renderSections(body, CREDITS);
+}
+
+function buildFaq() {
+    document.getElementById('faq-intro').textContent = FAQ_INTRO; // リード文はプレーンテキスト
+
+    const body = document.getElementById('faq-body');
+    body.innerHTML = '';
+    FAQ_ITEMS.forEach(item => {
+        const wrap = document.createElement('div');
+        wrap.className = 'faq-item';
+
+        const btn = document.createElement('button');
+        btn.className = 'faq-q';
+        btn.innerHTML = '<span class="faq-mark">＋</span><span class="flex-1">' + item.q + '</span>';
+        btn.addEventListener('click', () => wrap.classList.toggle('open'));
+
+        const ans = document.createElement('div');
+        ans.className = 'faq-a';
+        ans.innerHTML = item.a; // 本文はアプリ内で定義した固定文字列のみ
+
+        wrap.appendChild(btn);
+        wrap.appendChild(ans);
+        body.appendChild(wrap);
+    });
+}
+
+/* =====================================================================
+ * 起動処理
+ * ===================================================================== */
+// お手本カードのサイズを端末に合わせて決める（起動時に一度だけ）
+const CARD_SIZE = Math.max(
+    250,
+    Math.min(400, window.innerWidth - 76, window.innerHeight - 386)
+);
+document.documentElement.style.setProperty('--card', CARD_SIZE + 'px');
+
+buildHome();
+buildFaq();
+buildCredits();
+buildPrivacy();
+refreshHome();
+
+// 最初のタップで音声を有効化する（iOS/iPadOS の制限対応）
+document.addEventListener('pointerdown', ensureAudio, { once: true });
+
+document.getElementById('btn-start').addEventListener('click', () => {
+    ensureAudio();
+    startSession();
+});
+
+document.getElementById('btn-home').addEventListener('click', quitSession);
+
+document.querySelectorAll('[data-nav]').forEach(btn => {
+    btn.addEventListener('click', () => showView(btn.dataset.nav));
+});
+
+document.getElementById('btn-prev').addEventListener('click', () => {
+    if (currentIndex > 0) { currentIndex--; renderKanji(true); }
+});
+
+document.getElementById('btn-next').addEventListener('click', () => {
+    if (currentIndex < sessionKanji.length - 1) { currentIndex++; renderKanji(true); }
+});
+
+</script>
+</body>
+</html>

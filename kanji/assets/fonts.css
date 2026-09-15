@@ -1,0 +1,52 @@
+/* 同梱フォント（SIL Open Font License 1.1）
+ *
+ *  以前は Google Fonts から読み込んでいたが、
+ *    - オフラインで動かない
+ *    - 外部への通信が発生する（子ども向けアプリでは避けたい）
+ *  ため、必要な文字だけに絞って同梱に切り替えた。
+ *
+ *  作り直しかた: build/README.md
+ *  ライセンス全文: licenses.txt / assets/fonts/OFL.txt
+ */
+@font-face {
+    font-family: 'Yuji Syuku';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('fonts/YujiSyuku-Regular.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Dela Gothic One';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('fonts/DelaGothicOne-Regular.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Zen Maru Gothic';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('fonts/ZenMaruGothic-Medium.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Zen Maru Gothic';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('fonts/ZenMaruGothic-Bold.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Zen Maru Gothic';
+    font-style: normal;
+    font-weight: 900;
+    font-display: swap;
+    src: url('fonts/ZenMaruGothic-Black.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Klee One';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('fonts/KleeOne-SemiBold.woff2') format('woff2');
+}

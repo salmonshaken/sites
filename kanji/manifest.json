@@ -1,0 +1,20 @@
+{
+  "name": "スイスイ漢字道場",
+  "short_name": "漢字道場",
+  "description": "小学1〜6年生の漢字の書き順を、iPad と Apple Pencil で練習するアプリ",
+  "lang": "ja",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fdf6e6",
+  "theme_color": "#5f3d1d",
+  "icons": [
+    { "src": "icons/favicon-32.png",         "sizes": "32x32",   "type": "image/png" },
+    { "src": "icons/icon-192.png",           "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png",           "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png",  "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png",  "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
