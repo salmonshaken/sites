@@ -8,7 +8,7 @@
   2. canvas-confetti .............. ISC License
   3. Tailwind CSS ................. MIT License
   4. 書体4種 ....................... SIL Open Font License 1.1
-  5. 筆順データ（AnimCJK） ......... Arphic Public License
+  5. 筆順データ（AnimCJK / subAnimJ） ... Arphic Public License
   6. 漢字の読み（KANJIDIC/EDICT） .. Creative Commons Attribution-ShareAlike 4.0
 
 ================================================================================
@@ -197,10 +197,18 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 5. 筆順データ
 
    AnimCJK   https://github.com/parsimonhi/animCJK
-   hanzi-writer-data-ja 経由で利用しています。
+
+   小学1〜3年生の145字については、AnimCJK の字形と筆順を日本の小学校で習う形に
+   直した subAnimJ のデータを使っています。
+   subAnimJ   https://github.com/k1LoW/subAnimJ
+
+   どちらも @k1low/hanzi-writer-data-jp 経由で読み込んでいます。
+   https://github.com/k1LoW/hanzi-writer-data-jp
+   取得できなかったときは hanzi-writer-data-ja を使います。
    https://github.com/mnako/hanzi-writer-data-ja
 
    AnimCJK のデータは Arphic Public License のもとで提供されています。
+   subAnimJ は AnimCJK を改変したもので、同じ Arphic Public License を継承しています。
    以下はその全文です。
 ================================================================================
 ARPHIC PUBLIC LICENSE

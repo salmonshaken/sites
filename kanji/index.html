@@ -1215,6 +1215,35 @@ function fireCrackers() {
     document.getElementById('btn-back-home').addEventListener('click', quitSession);
 }
 
+/* お手本（筆順データ）の取得先。前から順に試す。
+ *
+ * 第一候補の subAnimJ 入りデータは、animCJK の字形を「日本の小学校で習う形」に
+ * 直したもの。たとえば「日」「田」の中の横画が隣の縦画に届くように伸ばしてある。
+ * 糸偏・竹冠も日本式の形と筆順に直っている（1〜3年生の145字が対象）。
+ *
+ * 現行データと突き合わせた結果（2026-09-18）:
+ *   - 画数が変わる字は0字。クイズの判定には影響しない
+ *   - 形が違うのは145字だけで、そのすべてが subAnimJ の修正対象と一致した
+ *   - 4〜6年生の字は1字も変わっていない
+ *
+ * バージョンは固定する。まだ 0.x で、勝手に上がると字形が変わりうるため。
+ */
+const STROKE_DATA_SOURCES = [
+    c => 'https://cdn.jsdelivr.net/npm/@k1low/hanzi-writer-data-jp@0.8.0/' + encodeURIComponent(c) + '.json',
+    c => 'https://cdn.jsdelivr.net/gh/mnako/hanzi-writer-data-ja@master/data/' + encodeURIComponent(c) + '.json'
+];
+
+function loadStrokeData(char, onLoad, onError) {
+    const tryFrom = i => {
+        if (i >= STROKE_DATA_SOURCES.length) { onError(new Error('筆順データを取得できませんでした')); return; }
+        fetch(STROKE_DATA_SOURCES[i](char))
+            .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+            .then(onLoad)
+            .catch(() => tryFrom(i + 1));
+    };
+    tryFrom(0);
+}
+
 function showReadings(char) {
     const onEl = document.getElementById('on-readings');
     const kunEl = document.getElementById('kun-readings');
@@ -1320,17 +1349,7 @@ function renderKanji(animateIn) {
         outlineColor: '#E5E7EB',
         drawingWidth: 28,
         drawingColor: '#1E3A8A',
-        charDataLoader: function (char, onLoad, onError) {
-            fetch('https://cdn.jsdelivr.net/gh/mnako/hanzi-writer-data-ja@master/data/' + char + '.json')
-                .then(res => { if (!res.ok) throw new Error(); return res.json(); })
-                .then(onLoad)
-                .catch(() => {
-                    fetch('https://cdn.jsdelivr.net/npm/hanzi-writer-data-jp@0/' + char + '.json')
-                        .then(res => { if (!res.ok) throw new Error(); return res.json(); })
-                        .then(onLoad)
-                        .catch(onError);
-                });
-        }
+        charDataLoader: loadStrokeData
     });
 
     writer.quiz({
