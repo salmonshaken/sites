@@ -164,6 +164,7 @@ table.mat td span{display:block;padding:9px 4px;font-family:var(--mono);
 svg.chart{width:100%;height:auto;display:block}
 /* 04: 円が中央から離散する。--dx/--dy は中央へ寄せる量、--d は距離に応じた遅延 */
 svg.scat circle{opacity:0;transform:translate(var(--dx),var(--dy)) scale(.12);
+  transform-origin:var(--ox) var(--oy);
   transition:transform .95s cubic-bezier(.16,.84,.34,1),opacity .55s ease-out;
   transition-delay:var(--d)}
 svg.scat.on circle{opacity:1;transform:none}
@@ -883,7 +884,8 @@ function renderScatter(){
     const x=X(p.C), y=Y(p.L), dist=Math.hypot(x-cx0,y-cy0);
     return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${
       (4+18*Math.sqrt(p.dots/mx)).toFixed(1)}" fill="${p.hex}" fill-opacity=".8"
-      stroke="#ffffff" stroke-opacity=".22" style="--dx:${(cx0-x).toFixed(1)}px;--dy:${
+      stroke="#ffffff" stroke-opacity=".22" style="--ox:${x.toFixed(1)}px;--oy:${
+      y.toFixed(1)}px;--dx:${(cx0-x).toFixed(1)}px;--dy:${
       (cy0-y).toFixed(1)}px;--d:${Math.round(dist/maxD*420)}ms"><title>${p.hex} ${
       esc(famName(p.family))} · L*${p.L} C*${p.C} · ${fmt(p.dots)}${t.dotsUnit}</title></circle>`;
   }).join("");
